@@ -74,6 +74,10 @@ if 'topic_analysis' not in st.session_state:
     st.session_state['topic_analysis'] = None
 if 'file_processed' not in st.session_state:
     st.session_state['file_processed'] = False
+if 'current_df' not in st.session_state:
+    st.session_state['current_df'] = None
+if 'current_interpretation' not in st.session_state:
+    st.session_state['current_interpretation'] = None
 
 # Title
 st.title("Review Analysis Dashboard")
@@ -226,6 +230,9 @@ if uploaded_file is not None and analyze_button:
                                 relevant_sentences = interpreter.extract_relevant_sentences(df_processed, topic_keywords)
                                 interpretation_results = interpreter.interpret_topics(relevant_sentences, topic_keywords)
                                 
+                                # Store interpretation results in session state
+                                st.session_state['current_interpretation'] = interpretation_results
+                                
                                 # Display interpretation results
                                 st.dataframe(interpretation_results, use_container_width=True)
                                 
@@ -235,7 +242,8 @@ if uploaded_file is not None and analyze_button:
                                     label="Download Interpretation Results",
                                     data=csv,
                                     file_name=f"{app_name}_topic_interpretation.csv",
-                                    mime="text/csv"
+                                    mime="text/csv",
+                                    key='download_interpretation'
                                 )
                             except Exception as transformer_error:
                                 st.error(f"Error initializing Topic Interpreter: {str(transformer_error)}")
@@ -253,9 +261,12 @@ if uploaded_file is not None and analyze_button:
             with tab3:
                 st.subheader("Negative & Neutral Reviews")
                 
-                # Display review table
+                # Store review data in session state
                 review_df = df_processed[['content', 'sentiment', 'thumbsUpCount']].copy()
                 review_df.columns = ['Review', 'Sentiment', 'Thumbs Up']
+                st.session_state['current_df'] = review_df
+                
+                # Display review table
                 st.dataframe(review_df, use_container_width=True)
                 
                 # Add download button
@@ -264,7 +275,8 @@ if uploaded_file is not None and analyze_button:
                     label="Download Reviews",
                     data=csv,
                     file_name=f"{app_name}_negative_neutral_reviews.csv",
-                    mime="text/csv"
+                    mime="text/csv",
+                    key='download_reviews'
                 )
             
             progress_bar.progress(100)
@@ -278,5 +290,62 @@ if uploaded_file is not None and analyze_button:
         st.error(f"An error occurred while processing the file: {str(e)}")
         st.exception(e)
 else:
+    # Display saved results if they exist
+    if st.session_state['file_processed'] and st.session_state['topic_analysis'] is not None:
+        if TOPIC_INTERPRETER_AVAILABLE:
+            tab1, tab2, tab3 = st.tabs(["Topic Analysis", "Topic Interpretation", "Review Details"])
+        else:
+            tab1, tab3 = st.tabs(["Topic Analysis", "Review Details"])
+        
+        with tab1:
+            st.subheader("Topic Analysis Results")
+            
+            # Regenerate plot from saved analysis
+            prioritizer = TopicPrioritizer()
+            topic_analysis = st.session_state['topic_analysis']
+            fig = prioritizer.generate_topic_analysis_plot(
+                topic_analysis['topic_keywords'],
+                topic_analysis['metrics'],
+                topic_analysis['combined_scores']
+            )
+            st.pyplot(fig)
+            plt.close(fig)
+            
+            # Display topic keywords
+            st.subheader("Topic Keywords")
+            for topic_num, keywords in topic_analysis['topic_keywords'].items():
+                st.write(f"{topic_num}: {', '.join(keywords[:10])}")
+        
+        if TOPIC_INTERPRETER_AVAILABLE:
+            with tab2:
+                st.subheader("Topic Interpretation Results")
+                if st.session_state['current_interpretation'] is not None:
+                    st.dataframe(st.session_state['current_interpretation'], use_container_width=True)
+                    
+                    # Add download button
+                    csv = st.session_state['current_interpretation'].to_csv(index=False)
+                    st.download_button(
+                        label="Download Interpretation Results",
+                        data=csv,
+                        file_name=f"{st.session_state['app_name']}_topic_interpretation.csv",
+                        mime="text/csv",
+                        key='download_interpretation'
+                    )
+        
+        with tab3:
+            st.subheader("Negative & Neutral Reviews")
+            if st.session_state['current_df'] is not None:
+                st.dataframe(st.session_state['current_df'], use_container_width=True)
+                
+                # Add download button
+                csv = st.session_state['current_df'].to_csv(index=False)
+                st.download_button(
+                    label="Download Reviews",
+                    data=csv,
+                    file_name=f"{st.session_state['app_name']}_negative_neutral_reviews.csv",
+                    mime="text/csv",
+                    key='download_reviews'
+                )
+    
     if analyze_button and not uploaded_file:
         st.warning("Please select an Excel file before analyzing.")
