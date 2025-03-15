@@ -6,6 +6,7 @@ import re
 
 class TopicInterpreter:
     def __init__(self, api_key):
+        """Initialize the TopicInterpreter with the Hugging Face API key."""
         self.api_key = api_key
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -24,7 +25,7 @@ class TopicInterpreter:
                 
                 for sentence in sentences:
                     keywords_found = [keyword for keyword in keywords if keyword in sentence]
-                    if len(set(keywords_found)) >= 5:
+                    if len(set(keywords_found)) >= 5:  # At least 5 unique keywords
                         relevant_sentences.append((sentence.strip(), thumbs_up))
             
             # Sort by thumbs up count and keep top 15
@@ -106,12 +107,12 @@ class TopicInterpreter:
         """Calculate relevance score using cosine similarity."""
         keywords_embedding = self.model.encode(" ".join(keywords), convert_to_tensor=True)
         text_embedding = self.model.encode(generated_text, convert_to_tensor=True)
-        return float(keywords_embedding @ text_embedding.T)
+        return float(util.cos_sim(keywords_embedding, text_embedding).item())
 
-    def _calculate_clarity(self, text, max_clarity=100):
+    def _calculate_clarity(self, text):
         """Calculate clarity score using Flesch Reading Ease."""
         clarity = flesch_reading_ease(text)
-        return min(clarity / max_clarity, 1.0)
+        return min(clarity / 100, 1.0)  # Normalize to [0,1]
 
     def _calculate_composite_score(self, relevance, clarity, relevance_weight=0.7, clarity_weight=0.3):
         """Calculate composite score combining relevance and clarity."""

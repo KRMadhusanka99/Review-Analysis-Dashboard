@@ -8,8 +8,13 @@ st.set_page_config(
 import pandas as pd
 import matplotlib.pyplot as plt
 from topic_prioritizer import TopicPrioritizer
+from topic_interpreter import TopicInterpreter
 import nltk
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Download required NLTK data at startup
 @st.cache_resource
@@ -161,7 +166,7 @@ if uploaded_file is not None and analyze_button:
             
             # Create tabs for visualization
             status_text.text('Generating visualizations...')
-            tab1, tab2 = st.tabs(["Topic Analysis", "Review Details"])
+            tab1, tab2, tab3 = st.tabs(["Topic Analysis", "Topic Interpretation", "Review Details"])
             
             with tab1:
                 st.subheader("Topic Analysis Results")
@@ -180,6 +185,38 @@ if uploaded_file is not None and analyze_button:
                     st.write(f"{topic_num}: {', '.join(keywords[:10])}")
             
             with tab2:
+                st.subheader("Topic Interpretation Results")
+                
+                # Get API key from environment variable
+                api_key = os.getenv('HUGGINGFACE_API_KEY')
+                
+                if api_key:
+                    try:
+                        # Initialize topic interpreter
+                        interpreter = TopicInterpreter(api_key)
+                        
+                        # Extract relevant sentences and interpret topics
+                        status_text.text('Interpreting topics...')
+                        relevant_sentences = interpreter.extract_relevant_sentences(df_processed, topic_keywords)
+                        interpretation_results = interpreter.interpret_topics(relevant_sentences, topic_keywords)
+                        
+                        # Display interpretation results
+                        st.dataframe(interpretation_results, use_container_width=True)
+                        
+                        # Add download button for interpretation results
+                        csv = interpretation_results.to_csv(index=False)
+                        st.download_button(
+                            label="Download Interpretation Results",
+                            data=csv,
+                            file_name=f"{app_name}_topic_interpretation.csv",
+                            mime="text/csv"
+                        )
+                    except Exception as e:
+                        st.error(f"Error in topic interpretation: {str(e)}")
+                else:
+                    st.error("HUGGINGFACE_API_KEY not found in environment variables. Please add it to your .env file.")
+            
+            with tab3:
                 st.subheader("Negative & Neutral Reviews")
                 
                 # Display review table
