@@ -1,47 +1,37 @@
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from topic_prioritizer import TopicPrioritizer
-from topic_interpreter import TopicInterpreter
-import os
-from dotenv import load_dotenv
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import nltk
-
-# Download all required NLTK data
-try:
-    nltk.download('punkt')
-    nltk.download('wordnet')
-    nltk.download('stopwords')
-    nltk.download('vader_lexicon')
-    nltk.download('averaged_perceptron_tagger')
-    nltk.download('punkt_tab')
-except Exception as e:
-    st.warning(f"Some NLTK resources could not be downloaded. This might affect the analysis. Error: {str(e)}")
-
-# Load environment variables
-load_dotenv()
-
-# Set page configuration
+# Set page configuration must be the first st command
 st.set_page_config(
     page_title="Review Analysis Dashboard",
     layout="wide"
 )
 
+import pandas as pd
+import matplotlib.pyplot as plt
+from topic_prioritizer import TopicPrioritizer
+import nltk
+import os
+
+# Download required NLTK data at startup
+@st.cache_resource
+def download_nltk_data():
+    try:
+        nltk.download('vader_lexicon', quiet=True)
+        nltk.download('punkt', quiet=True)
+        nltk.download('wordnet', quiet=True)
+        nltk.download('stopwords', quiet=True)
+        nltk.download('averaged_perceptron_tagger', quiet=True)
+    except Exception as e:
+        st.warning(f"Some NLTK resources could not be downloaded. Error: {str(e)}")
+
+# Call the download function
+download_nltk_data()
+
 # Add custom CSS
 st.markdown("""
     <style>
-    .main {
-        padding: 1rem;
-    }
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 0rem;
-    }
-    div[data-testid="stVerticalBlock"] {
-        gap: 0.5rem;
-    }
+    .main { padding: 1rem; }
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    div[data-testid="stVerticalBlock"] { gap: 0.5rem; }
     .metric-card {
         background-color: #f8f9fa;
         padding: 0.75rem;
@@ -49,32 +39,26 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         margin-bottom: 1rem;
     }
-    .stButton>button {
-        width: 100%;
-        margin-top: 1rem;
-    }
-    .upload-section {
-        margin-bottom: 2rem;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 2rem;
-    }
-    div[data-testid="stMetricLabel"] {
-        font-size: 1.2rem;
-        font-weight: bold;
-    }
+    .stButton>button { width: 100%; margin-top: 1rem; }
+    .upload-section { margin-bottom: 2rem; }
+    div[data-testid="stMetricValue"] { font-size: 2rem; }
+    div[data-testid="stMetricLabel"] { font-size: 1.2rem; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state for metrics
+# Initialize session state
 if 'app_name' not in st.session_state:
     st.session_state.app_name = "No file uploaded"
 if 'total_reviews' not in st.session_state:
     st.session_state.total_reviews = 0
 if 'neg_neutral_reviews' not in st.session_state:
     st.session_state.neg_neutral_reviews = 0
+if 'processed_data' not in st.session_state:
+    st.session_state.processed_data = None
+if 'topic_analysis' not in st.session_state:
+    st.session_state.topic_analysis = None
 
-# Title and metrics at the top
+# Title
 st.title("Review Analysis Dashboard")
 
 # Display metrics
@@ -86,158 +70,140 @@ with col2:
 with col3:
     st.metric("Negative & Neutral Reviews", st.session_state.neg_neutral_reviews)
 
-# Sidebar for file upload
+# Sidebar
 with st.sidebar:
     st.header("Upload Reviews")
-    with st.form("upload_form"):
-        uploaded_file = st.file_uploader("Select Excel file (.xlsx)", type=['xlsx'])
-        submit_button = st.form_submit_button("Analyze Reviews")
+    uploaded_file = st.file_uploader("Select Excel file (.xlsx)", type=['xlsx'])
+    analyze_button = st.button("Analyze Reviews")
     
-    # Metric explanations
     st.markdown("### Metric Explanations")
-    
     with st.expander("Entropy"):
-        st.write("Measures the diversity of keywords in reviews, where lower entropy indicates more focused user concerns that are prioritized higher.")
-    
+        st.write("Measures the diversity of keywords in reviews, where lower entropy indicates more focused user concerns.")
     with st.expander("Topic Prevalence"):
-        st.write("Represents how frequently a topic appears across reviews, with higher prevalence indicating a more commonly reported issue.")
-    
+        st.write("Represents how frequently a topic appears across reviews, with higher prevalence indicating more common issues.")
     with st.expander("Thumbs-Up Count"):
-        st.write("Reflects user agreement on the importance of a review, where higher counts indicate greater relevance to users.")
-    
+        st.write("Reflects user agreement on review importance, where higher counts indicate greater relevance.")
     with st.expander("Sentiment Score"):
-        st.write("Captures the negativity of reviews using VADER, where more negative sentiment increases the priority of a topic.")
+        st.write("Captures the negativity of reviews, where more negative sentiment increases topic priority.")
+
+# Cache the data processing function
+@st.cache_data
+def process_data(df):
+    prioritizer = TopicPrioritizer()
+    return prioritizer.process_reviews(df)
+
+# Cache the topic modeling function
+@st.cache_data
+def perform_topic_analysis(texts, thumbs_up_counts, num_topics):
+    prioritizer = TopicPrioritizer()
+    
+    # Perform topic modeling
+    lda_model, dictionary, corpus = prioritizer._perform_topic_modeling(texts, num_topics)
+    
+    # Get topics in the correct format
+    topics = []
+    for i in range(num_topics):
+        topic_terms = lda_model.show_topic(i, 10)  # Get top 10 words for each topic
+        topics.append(topic_terms)
+    
+    # Create topic keywords dictionary
+    topic_keywords = {f"Topic {i}": [word for word, _ in topics[i]] 
+                     for i in range(num_topics)}
+    
+    # Calculate metrics and combined scores
+    metrics = prioritizer.calculate_metrics(texts, topic_keywords, thumbs_up_counts)
+    combined_scores = prioritizer.calculate_combined_scores(metrics)
+    
+    return topic_keywords, metrics, combined_scores
 
 # Main content area
-if uploaded_file is not None and submit_button:
+if uploaded_file is not None and analyze_button:
     try:
-        # Get app name from filename and update session state
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Update app name and load data
+        status_text.text('Loading data...')
         app_name = os.path.splitext(uploaded_file.name)[0]
         st.session_state.app_name = app_name
         
-        # Load data
+        # Read the Excel file
         df = pd.read_excel(uploaded_file)
         st.session_state.total_reviews = len(df)
-        
-        # Initialize sentiment analyzer
-        analyzer = SentimentIntensityAnalyzer()
-        
-        # Calculate sentiment scores and classify
-        df['sentiment_score'] = df['content'].apply(lambda x: analyzer.polarity_scores(str(x))['compound'])
-        df['sentiment'] = df['sentiment_score'].apply(lambda score: 
-            'positive' if score >= 0.05 
-            else 'negative' if score <= -0.05 
-            else 'neutral'
-        )
-        
-        # Update negative and neutral reviews count
-        neg_neutral_count = len(df[df['sentiment'].isin(['negative', 'neutral'])])
-        st.session_state.neg_neutral_reviews = neg_neutral_count
-        
-        # Rerun to update metrics
-        st.experimental_rerun()
-        
-        # Initialize topic prioritizer
-        prioritizer = TopicPrioritizer()
+        progress_bar.progress(20)
         
         # Process reviews
-        df_processed = prioritizer.process_reviews(df)
-        texts = df_processed['processed_content'].tolist()
-        thumbs_up_counts = df_processed['thumbsUpCount'].tolist()
+        status_text.text('Processing reviews...')
+        df_processed = process_data(df)
+        st.session_state.neg_neutral_reviews = len(df_processed)
+        st.session_state.processed_data = df_processed
+        progress_bar.progress(40)
         
-        # Default topic numbers
-        topic_numbers = [5, 7, 8, 10]
-        
-        # Perform topic modeling and evaluation
-        results = prioritizer.evaluate_topics(texts, topic_numbers)
-        best_num_topics, best_metrics = max(results.items(), key=lambda x: x[1][1])
-        
-        # Get topic keywords
-        lda_model, dictionary, corpus = prioritizer._perform_topic_modeling(texts, best_num_topics)
-        topics = lda_model.show_topics(num_topics=best_num_topics, num_words=10, formatted=False)
-        topic_keywords = {f"Topic {topic_num}": [word for word, _ in topic] 
-                         for topic_num, topic in enumerate(topics)}
-        
-        # Calculate metrics
-        metrics = prioritizer.calculate_metrics(texts, topic_keywords, thumbs_up_counts, None)
-        combined_scores = prioritizer.calculate_combined_scores(metrics)
-        
-        # Create tabs for visualization and results
-        tab1, tab2 = st.tabs(["Topic Analysis", "Topic Interpretation"])
-        
-        with tab1:
-            # Create visualization
-            st.subheader("Topic Analysis Scores by Metrics")
+        if len(df_processed) > 0:
+            # Prepare data for topic analysis
+            status_text.text('Analyzing topics...')
+            texts = df_processed['processed_content'].tolist()
+            thumbs_up_counts = df_processed['thumbsUpCount'].tolist()
             
-            fig, ax = plt.subplots(figsize=(12, 6))
-            x = range(len(topic_keywords))
-            width = 0.2
+            # Perform topic analysis with fixed number of topics (8)
+            topic_keywords, metrics, combined_scores = perform_topic_analysis(
+                texts, thumbs_up_counts, num_topics=8
+            )
+            progress_bar.progress(70)
             
-            # Plot bars for each metric
-            ax.bar([i - 1.5*width for i in x], metrics['entropy'], width, 
-                   label='Entropy', color='skyblue')
-            ax.bar([i - 0.5*width for i in x], metrics['prevalence'], width,
-                   label='Prevalence', color='lightgreen')
-            ax.bar([i + 0.5*width for i in x], metrics['thumbs_up'], width,
-                   label='Thumbs Up', color='salmon')
-            ax.bar([i + 1.5*width for i in x], metrics['sentiment'], width,
-                   label='Sentiment', color='purple')
+            # Store analysis results
+            st.session_state.topic_analysis = {
+                'topic_keywords': topic_keywords,
+                'metrics': metrics,
+                'combined_scores': combined_scores
+            }
             
-            # Plot combined score line
-            ax.plot(x, combined_scores, 'k-', label='Combined Score', linewidth=2)
-            ax.plot(x, combined_scores, 'ko')
+            # Create tabs for visualization
+            status_text.text('Generating visualizations...')
+            tab1, tab2 = st.tabs(["Topic Analysis", "Review Details"])
             
-            ax.set_xticks(x)
-            ax.set_xticklabels([f'Topic {i+1}' for i in range(len(topic_keywords))], rotation=45)
-            ax.set_xlabel('Topics')
-            ax.set_ylabel('Scores')
-            ax.legend()
-            plt.tight_layout()
-            
-            # Display plot
-            st.pyplot(fig)
-        
-        with tab2:
-            # Get API key from environment variable
-            api_key = os.getenv('HUGGINGFACE_API_KEY')
-            
-            if api_key:
-                interpreter = TopicInterpreter(api_key)
+            with tab1:
+                st.subheader("Topic Analysis Results")
                 
-                # Extract relevant sentences and interpret topics
-                relevant_sentences = interpreter.extract_relevant_sentences(df_processed, topic_keywords)
-                interpretation_results = interpreter.interpret_topics(relevant_sentences, topic_keywords)
+                # Generate and display plot
+                prioritizer = TopicPrioritizer()
+                fig = prioritizer.generate_topic_analysis_plot(
+                    topic_keywords, metrics, combined_scores
+                )
+                st.pyplot(fig)
+                plt.close(fig)
                 
-                # Display interpretation results
-                st.subheader("Topic Interpretation Results")
-                st.dataframe(interpretation_results)
+                # Display topic keywords
+                st.subheader("Topic Keywords")
+                for topic_num, keywords in topic_keywords.items():
+                    st.write(f"{topic_num}: {', '.join(keywords[:10])}")
+            
+            with tab2:
+                st.subheader("Negative & Neutral Reviews")
                 
-                # Download buttons
-                col1, col2 = st.columns(2)
-                with col1:
-                    # Save negative and neutral reviews
-                    csv = df_processed.to_csv(index=False)
-                    st.download_button(
-                        label="Download Negative & Neutral Reviews",
-                        data=csv,
-                        file_name=f"{app_name}_negative_neutral_reviews.csv",
-                        mime="text/csv"
-                    )
+                # Display review table
+                review_df = df_processed[['content', 'sentiment', 'thumbsUpCount']].copy()
+                review_df.columns = ['Review', 'Sentiment', 'Thumbs Up']
+                st.dataframe(review_df, use_container_width=True)
                 
-                with col2:
-                    # Save interpretation results
-                    csv = interpretation_results.to_csv(index=False)
-                    st.download_button(
-                        label="Download Topic Interpretation Results",
-                        data=csv,
-                        file_name=f"{app_name}_topic_interpretation.csv",
-                        mime="text/csv"
-                    )
-            else:
-                st.error("HUGGINGFACE_API_KEY not found in environment variables. Please add it to your .env file.")
+                # Add download button
+                csv = review_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Reviews",
+                    data=csv,
+                    file_name=f"{app_name}_negative_neutral_reviews.csv",
+                    mime="text/csv"
+                )
+            
+            progress_bar.progress(100)
+            status_text.text('Analysis complete!')
+        else:
+            st.warning("No negative or neutral reviews found in the dataset.")
             
     except Exception as e:
         st.error(f"An error occurred while processing the file: {str(e)}")
+        st.exception(e)
 else:
-    if submit_button and not uploaded_file:
-        st.sidebar.warning("Please select an Excel file before analyzing.")
+    if analyze_button and not uploaded_file:
+        st.warning("Please select an Excel file before analyzing.")

@@ -11,6 +11,7 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from langdetect import detect
 import re
+import matplotlib.pyplot as plt
 
 # Download required NLTK data
 nltk.download('vader_lexicon')
@@ -103,7 +104,7 @@ class TopicPrioritizer:
         else:
             return 'neutral'
 
-    def perform_topic_modeling(self, texts, num_topics):
+    def _perform_topic_modeling(self, texts, num_topics):
         tokenized_texts = [text.split() for text in texts]
         dictionary = corpora.Dictionary(tokenized_texts)
         corpus = [dictionary.doc2bow(text) for text in tokenized_texts]
@@ -113,7 +114,7 @@ class TopicPrioritizer:
     def evaluate_topics(self, texts, topic_numbers):
         results = {}
         for num_topics in topic_numbers:
-            lda_model, dictionary, corpus = self.perform_topic_modeling(texts, num_topics)
+            lda_model, dictionary, corpus = self._perform_topic_modeling(texts, num_topics)
             perplexity = lda_model.log_perplexity(corpus)
             coherence_model = models.CoherenceModel(
                 model=lda_model, 
@@ -125,17 +126,17 @@ class TopicPrioritizer:
             results[num_topics] = (perplexity, coherence_score)
         return results
 
-    def calculate_metrics(self, texts, topic_keywords, thumbs_up_counts, word2vec_model):
+    def calculate_metrics(self, texts, topic_keywords, thumbs_up_counts, word2vec_model=None):
         entropy_scores = self._calculate_entropy(texts, topic_keywords)
         prevalence_scores = self._calculate_prevalence(texts, topic_keywords)
-        thumbs_up_scores = self._calculate_thumbs_up(texts, thumbs_up_counts, topic_keywords, word2vec_model)
-        sentiment_scores = self._calculate_sentiment(texts, topic_keywords, word2vec_model)
+        thumbs_up_scores = self._calculate_thumbs_up(texts, thumbs_up_counts, topic_keywords)
+        sentiment_scores = self._calculate_sentiment(texts, topic_keywords)
         
         return {
-            'entropy': self._normalize(list(entropy_scores)),
-            'prevalence': list(prevalence_scores),
-            'thumbs_up': self._normalize(list(thumbs_up_scores)),
-            'sentiment': self._normalize(list(sentiment_scores))
+            'entropy': self._normalize(entropy_scores),
+            'prevalence': prevalence_scores,
+            'thumbs_up': self._normalize(thumbs_up_scores),
+            'sentiment': self._normalize(sentiment_scores)
         }
 
     def _calculate_entropy(self, texts, topic_keywords):
@@ -152,8 +153,7 @@ class TopicPrioritizer:
                 entropy_scores.append(1 - entropy(probs))  # Invert entropy
             else:
                 entropy_scores.append(0)
-        
-        return self._normalize(entropy_scores)
+        return entropy_scores
 
     def _calculate_prevalence(self, texts, topic_keywords):
         prevalence_scores = []
@@ -163,24 +163,21 @@ class TopicPrioritizer:
             count = sum(1 for text in texts if any(word in text for word in keywords))
             prevalence_scores.append(count / total_texts if total_texts > 0 else 0)
         
-        return prevalence_scores  # Already normalized
+        return prevalence_scores
 
-    def _calculate_thumbs_up(self, texts, thumbs_up_counts, topic_keywords, word2vec_model):
+    def _calculate_thumbs_up(self, texts, thumbs_up_counts, topic_keywords):
         thumbs_up_scores = []
-        
         for keywords in topic_keywords.values():
             total_thumbs_up = 0
             for text, thumbs_up in zip(texts, thumbs_up_counts):
                 words = set(text.split())
-                if len(set(keywords) & words) >= 3:  # At least 3 keywords present
+                if len(set(keywords) & words) >= 3:
                     total_thumbs_up += thumbs_up
             thumbs_up_scores.append(total_thumbs_up)
-        
-        return self._normalize(thumbs_up_scores)
+        return thumbs_up_scores
 
-    def _calculate_sentiment(self, texts, topic_keywords, word2vec_model):
+    def _calculate_sentiment(self, texts, topic_keywords):
         sentiment_scores = []
-        
         for keywords in topic_keywords.values():
             scores = []
             for text in texts:
@@ -188,11 +185,9 @@ class TopicPrioritizer:
                 if len(set(keywords) & words) >= 3:
                     score = self.get_sentiment_score(text)
                     scores.append(score)
-            
             avg_score = np.mean(scores) if scores else 0
             sentiment_scores.append(-avg_score)  # Invert scores to prioritize negative sentiment
-        
-        return self._normalize(sentiment_scores)
+        return sentiment_scores
 
     def _normalize(self, values):
         if not values:
@@ -217,4 +212,33 @@ class TopicPrioritizer:
                        for metric in weights.keys())
             combined_scores.append(score)
             
-        return combined_scores 
+        return combined_scores
+
+    def generate_topic_analysis_plot(self, topic_keywords, metrics, combined_scores):
+        fig, ax = plt.subplots(figsize=(12, 6))
+        x = range(len(topic_keywords))
+        width = 0.2
+        
+        # Plot bars for each metric
+        ax.bar([i - 1.5*width for i in x], metrics['entropy'], width, 
+               label='Entropy', color='skyblue')
+        ax.bar([i - 0.5*width for i in x], metrics['prevalence'], width,
+               label='Prevalence', color='lightgreen')
+        ax.bar([i + 0.5*width for i in x], metrics['thumbs_up'], width,
+               label='Thumbs Up', color='salmon')
+        ax.bar([i + 1.5*width for i in x], metrics['sentiment'], width,
+               label='Sentiment', color='purple')
+        
+        # Plot combined score line
+        ax.plot(x, combined_scores, 'k-', label='Combined Score', linewidth=2)
+        ax.plot(x, combined_scores, 'ko')
+        
+        ax.set_xticks(x)
+        ax.set_xticklabels([f'Topic {i+1}' for i in range(len(topic_keywords))], rotation=45)
+        ax.set_xlabel('Topics')
+        ax.set_ylabel('Scores')
+        ax.set_title('Topic Analysis Scores by Metrics')
+        ax.legend()
+        plt.tight_layout()
+        
+        return fig 
