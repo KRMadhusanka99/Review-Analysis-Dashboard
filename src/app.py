@@ -176,9 +176,9 @@ if uploaded_file is not None and analyze_button:
             texts = df_processed['processed_content'].tolist()
             thumbs_up_counts = df_processed['thumbsUpCount'].tolist()
             
-            # Perform topic analysis with fixed number of topics (8)
+            # Perform topic analysis with fixed number of topics (10)
             topic_keywords, metrics, combined_scores = perform_topic_analysis(
-                texts, thumbs_up_counts, num_topics=8
+                texts, thumbs_up_counts, num_topics=10
             )
             progress_bar.progress(70)
             
